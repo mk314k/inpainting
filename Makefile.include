@@ -1,0 +1,77 @@
+
+BUILD_DIR  := _build
+EXECUTABLE := a$(NUMBER)
+OUTPUT := Output
+CXXFLAGS ?= -Wall -std=c++11 -I. -w -O3
+
+
+
+# We declare the C++ compiler/linker to be used.
+# We define it as a variable so we can change it easily if needed.
+
+# === Targets ==================================================================
+
+# In the remainder of the Makefile, we define a list of 'targets' and their
+# dependencies. When we type the command 'make <target>' in the command line
+# for a given <target>, Make will figure out the dependencies needed by
+# <target> and specified in this Makefile. The basic syntax is:
+# <target>: <dependencies>
+# 	<command to run>
+
+# 'make' or 'make all' runs the default target 'all' which requires that
+# the EXECUTABLE must be available; if the EXECUTABLE is already available
+# then nothing happens. Otherwise, make will follow the rules to for
+# EXECUTABLE, which you can see below. .PHONY tells make that "all" is not a
+# file or an executable but really just the name of a recipe
+
+all: $(EXECUTABLE)
+.PHONY: all
+
+# ------------------------------------------------------------------------------
+
+# 'make run' runs the target 'run' which calls for running the executable if
+# the executable is not available, then the rules for creating it are run this
+# is a superset of the target 'all' because it creates the executable
+# and also runs it
+
+run: $(EXECUTABLE)
+	./$(EXECUTABLE)
+.PHONY: run
+
+clean:
+	rm -rf $(BUILD_DIR) $(EXECUTABLE) $(OUTPUT) $(TESTS)
+.PHONY: clean
+
+# ------------------------------------------------------------------------------
+
+# rule for creating the executable: this "links" the .o files using the g++
+# linker. If .o files are not available, then the rules for creating .o files
+# are run.
+$(EXECUTABLE): $(OBJS) $(BUILD_DIR)/a$(NUMBER)_main.o | $(OUTPUT)
+	$(CXX) $(CXXFLAGS) $(OBJS) $(BUILD_DIR)/a$(NUMBER)_main.o -o $@
+
+# ------------------------------------------------------------------------------
+
+
+# Rule to create build and output directory
+$(BUILD_DIR) $(OUTPUT):
+	mkdir -p -v $@
+
+# Rule to generate .o files and .d (header dependencies) files
+$(BUILD_DIR)/%.o: %.cpp | $(BUILD_DIR) 
+	$(CXX) $(CXXFLAGS) -c $< -o $@
+	$(CXX) $(CXXFLAGS) -c $< -MM -MT $@ > $(@:.o=.d)
+
+# Include auto-generated header dependencies
+-include $(OBJS:.o=.d)
+
+# ------------------------------------------------------------------------------
+
+
+# Staff only: Generate tests
+TESTS = $(patsubst %.cpp, %, $(wildcard test*.cpp))
+tests: $(TESTS)
+
+TEST_OBJS = $(BUILD_DIR)/a$(NUMBER)TestCode.o $(BUILD_DIR)/commonTestCode.o
+$(TESTS): % :$(BUILD_DIR)/%.o $(OBJS) $(TEST_OBJS) | $(OUTPUT)
+	$(CXX) $(CXXFLAGS) $(BUILD_DIR)/$(@).o  $(OBJS) $(TEST_OBJS) -o $(@)
