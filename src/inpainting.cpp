@@ -1,11 +1,6 @@
 #include <iostream>
 
-#include "a9.h"
-#include "Image.h"
-#include "basicImageManipulation.h"
-#include "matrix.h"
-#include "filtering.h"
-#include "morphing.h"
+#include "../include/inpainting.h"
 
 using namespace std;
 
@@ -207,7 +202,7 @@ void inpaint_point(int i,int j, const Image &mask, const Image &T, const Image &
     out(i,j) = Ia/s;
 }
 float getx(const Image &im, const int x){
-    if (x>=im.number_of_elements() || x<0){
+    if (x>=im.len() || x<0){
         return 1.0f;
     }else{
         return im(x);
@@ -223,7 +218,7 @@ Image inpaint(const Image &im, const Image &mask){
     int k[4], l[4];
     int KNOWN =0;
     int INSIDE = 1;
-    for (int x=0; x<mask.number_of_elements(); x++){
+    for (int x=0; x<mask.len(); x++){
         if (mask(x)==0 && (getx(mask,x-1)==1 || getx(mask, x+1)==1 || getx(mask,x+w)==1 || getx(mask,x-w)==1)){
             narrow_band.push_back(x);
             f(x) = 0.5;

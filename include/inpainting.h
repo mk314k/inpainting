@@ -1,11 +1,13 @@
-#ifndef __A9_H
-#define __A9_H
+#ifndef __INPAINTING_H
+#define __INPAINTING_H
 
-#include "Image.h"
-#include "basicImageManipulation.h"
 #include <iostream>
 #include <math.h>
+#include "Image.h"
+#include "ImageManipulation.h"
+#include "matrix.h"
 #include "filtering.h"
+#include "morphing.h"
 
 using namespace std;
 
@@ -36,5 +38,5 @@ float solve(int i1,int j1,int i2,int j2, Image &f, Image &T,int KNOWN = 0);
 void inpaint_point(int i,int j, const Image &mask, const Image &T, const Image &Tx, const Image &Ty, Image &out, int eps=2);
 Image inpaint(const Image &im, const Image &mask);
 
-#endif /* end of include guard: A10_H_PHUDVTKB */
+#endif 
 
