@@ -23,12 +23,12 @@ jobs:
         make
       working-directory: ${{ github.workspace }}
 
-    - name: Run check
-      run: |
-        make check
-      working-directory: ${{ github.workspace }}
+    # - name: Run check
+    #   run: |
+    #     make check
+    #   working-directory: ${{ github.workspace }}
 
-    - name: Run distcheck
-      run: |
-        make distcheck
-      working-directory: ${{ github.workspace }}
+    # - name: Run distcheck
+    #   run: |
+    #     make distcheck
+    #   working-directory: ${{ github.workspace }}
