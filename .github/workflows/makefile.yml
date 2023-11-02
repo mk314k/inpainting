@@ -2,26 +2,33 @@ name: Makefile CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [main]
   pull_request:
-    branches: [ "main" ]
+    branches: [main]
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v2
 
-    # - name: configure
-    #   run: ./configure
+    - name: Initialize and update submodule
+      run: |
+        git submodule update --init --recursive
+      working-directory: ${{ github.workspace }}
 
     - name: Install dependencies
-      run: make
+      run: |
+        make
+      working-directory: ${{ github.workspace }}
 
     - name: Run check
-      run: make check
+      run: |
+        make check
+      working-directory: ${{ github.workspace }}
 
     - name: Run distcheck
-      run: make distcheck
+      run: |
+        make distcheck
+      working-directory: ${{ github.workspace }}
