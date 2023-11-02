@@ -4,11 +4,6 @@
 
 using namespace std;
 
-// Write your implementations here, or extend the Makefile if you add source
-// files
-void someFunction() {
-    cout << "ok, that's a function" << endl;
-}
 
 float dotIm(const Image &im1, const Image &im2, const bool &zeroClamp){
     float val =0.0;
@@ -134,24 +129,24 @@ Image channel_copy(const Image &im){
     return res;
 }
 
-Image computeTensor(const Image &im, float sigmaG, float factorSigma) {
-  // // --------- HANDOUT  PS07 ------------------------------
-  // Compute xx/xy/yy Tensor of an image. (stored in that order)
-  Image imb = gaussianBlur_separable(im,sigmaG);
-  Image imx = gradientX(imb,true);
-  Image imy = gradientY(imb,true);
-  Image res = Image(im.extent(0),im.extent(1),3);
-  for (int x =0; x<res.width();x++){
-    for (int y=0; y<res.height();y++){
-      res(x,y,0) = powf(imx(x,y),2);
-      res(x,y,1) = imx(x,y)*imy(x,y);
-      res(x,y,2) = imy(x,y)*imy(x,y);
-    }
-  }
-  Image result = gaussianBlur_separable(res,sigmaG*factorSigma);
+// Image computeTensor(const Image &im, float sigmaG, float factorSigma) {
+//   // // --------- HANDOUT  PS07 ------------------------------
+//   // Compute xx/xy/yy Tensor of an image. (stored in that order)
+//   Image imb = gaussianBlur_separable(im,sigmaG);
+//   Image imx = gradientX(imb,true);
+//   Image imy = gradientY(imb,true);
+//   Image res = Image(im.extent(0),im.extent(1),3);
+//   for (int x =0; x<res.width();x++){
+//     for (int y=0; y<res.height();y++){
+//       res(x,y,0) = powf(imx(x,y),2);
+//       res(x,y,1) = imx(x,y)*imy(x,y);
+//       res(x,y,2) = imy(x,y)*imy(x,y);
+//     }
+//   }
+//   Image result = gaussianBlur_separable(res,sigmaG*factorSigma);
 
-  return result;
-}
+//   return result;
+// }
 
 Image inpaint_poisson(const Image &im, const Image &mask){
     Image flat = Image(im.width(), im.height(), im.channels());

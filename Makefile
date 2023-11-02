@@ -1,26 +1,28 @@
-NUMBER := 9
-OBJS=\
-$(BUILD_DIR)/basicImageManipulation.o \
-$(BUILD_DIR)/a9.o \
-$(BUILD_DIR)/morphing.o \
-$(BUILD_DIR)/filtering.o \
-$(BUILD_DIR)/npr.o \
-$(BUILD_DIR)/Image.o \
-$(BUILD_DIR)/lodepng.o 
+CXX = g++
+CXXFLAGS = -std=c++11 -Iinclude -IImgLib/include
+SRC_DIR = src
+BUILD_DIR = build
+EXECUTABLE = imglib
 
-include Makefile.include
+# List of source files including those from the submodule
+SOURCES := $(wildcard $(SRC_DIR)/*.cpp) $(wildcard ImgLib/src/*.cpp)
 
-prepare:
-	mkdir -p asst
-	cp *.cpp asst
-	cp *.h asst
-	cp *.py asst
-	cp Makefile asst
-	cp Makefile.include asst
-	cp -R Input asst
-	cp -R Eigen asst
-	cp -R Output asst
-	cp -R write-up asst
-	zip -r a$(NUMBER)_submission.zip asst
-	rm -rf asst
-.PHONY: prepare
+# List of object files (one for each source file)
+OBJECTS := $(patsubst $(SRC_DIR)/%.cpp,$(BUILD_DIR)/%.o,$(SOURCES))
+
+all: $(BUILD_DIR)/$(EXECUTABLE)
+
+$(BUILD_DIR)/$(EXECUTABLE): $(OBJECTS)
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
+# Pattern rule to build object files
+$(BUILD_DIR)/%.o: $(SRC_DIR)/%.cpp | $(BUILD_DIR)
+	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+$(BUILD_DIR):
+	mkdir -p $(BUILD_DIR)
+
+clean:
+	rm -rf $(BUILD_DIR)
+
+.PHONY: all clean

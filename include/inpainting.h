@@ -3,16 +3,14 @@
 
 #include <iostream>
 #include <math.h>
-#include "Image.h"
-#include "ImageManipulation.h"
-#include "matrix.h"
-#include "filtering.h"
-#include "morphing.h"
+#include "../ImgLib/include/Image.h"
+#include "../ImgLib/include/ImageManipulation.h"
+#include "../ImgLib/include/filtering.h"
+#include "../ImgLib/include/morphing.h"
 
 using namespace std;
 
 
-void someFunction();
 float dotIm(const Image &im1, const Image &im2, const bool &zeroClamp = true);
 Image applyKernel(const Image &im, Filter &filt);
 Image applyConjugatedKernel(const Image &im, Filter &filt);
@@ -31,7 +29,7 @@ vector<Image> channel_split(const Image &im);
 Image channel_combine(const vector<Image> &IM);
 Image channel_copy(const Image &im);
 
-Image computeTensor(const Image &im, float sigmaG=1.0f, float factorSigma=4.0f) ;
+// Image computeTensor(const Image &im, float sigmaG=1.0f, float factorSigma=4.0f) ;
 
 float solve(int i1,int j1,int i2,int j2, Image &f, Image &T,int KNOWN = 0);
 
