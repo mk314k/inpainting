@@ -1,0 +1,125 @@
+\documentclass{amsart}
+\usepackage[margin=1in]{geometry}
+\usepackage[english]{babel}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath,amssymb,amsfonts,amsthm}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage[labelfont=bf,labelsep=period,justification=raggedright]{caption}
+\usepackage[ruled,vlined,linesnumbered]{algorithm2e}
+
+\graphicspath{{./figures/}{./}}
+
+\DontPrintSemicolon
+\SetKwInput{KwIn}{Input}
+\SetKwInput{KwOut}{Output}
+\SetKwProg{Fn}{Function}{:}{end}
+
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{corollary}[theorem]{Corollary}
+\newtheorem{define}[theorem]{Definition}
+
+\setlength{\parindent}{0cm}
+\setlength{\parskip}{6pt}
+
+\title{Variational Image Restoration: Deconvolution, Poisson Editing, and Structure-Guided Inpainting}
+\author{Kartikesh Mishra}
+\date{November 2023}
+
+\begin{document}
+
+\maketitle
+
+\begin{abstract}
+Fundamental restoration tasks in computational photography---including non-blind image deblurring, seamless region cloning, and digital inpainting---can be unified as variational optimization problems on a discrete two-dimensional pixel lattice. In this paper, we develop the mathematical theory and matrix-free numerical solvers for three closely linked problems: (i) non-blind deconvolution via Steepest Descent and Laplacian-regularized Conjugate Gradient (CG) optimization; (ii) gradient-domain Poisson image editing with Dirichlet boundary conditions; and (iii) digital image inpainting via harmonic PDE relaxation, Telea's Eikonal Fast Marching Method (FMM), and a novel \textbf{FMM-Warm-Started Structure-Tensor Anisotropic CG Inpainting} scheme. We prove that both the isotropic five-point Laplacian $L = G^T G$ and the structure-tensor-weighted divergence operator $L_D = G^T D G$ are symmetric positive definite under Dirichlet boundary conditions, establish that FMM warm-starting strictly contracts the Krylov initial energy norm $\|X_0 - X^*\|_{L_D}$, and present clean matrix-free algorithms for each solver.
+\end{abstract}
+
+\section{Introduction}\label{sec_intro}
+
+Photographs captured in real-world environments rarely record an ideal, uncorrupted scene. Optical defocus and camera motion blur smear fine spatial detail across neighboring pixels; sensor noise corrupts low-light exposures; and physical obstructions, surface scratches, or unwanted foreground objects occlude portions of the scene. A particularly compelling modern application of digital inpainting is automated privacy and copyright protection: a camera system can detect restricted landmarks or fiducial QR markers in a live scene, generate a binary mask over the protected region, and seamlessly reconstruct the background across the mask so the restricted object never appears in the final photograph. Similarly, archival restoration and reflection removal rely on recovering sharp, visually coherent structure from degraded pixel observations.
+
+At first glance, deblurring a motion-blurred photograph, seamlessly pasting an object from one scene into another, and filling in a missing hole appear to be three separate problems requiring unrelated algorithms. Yet when we formulate each task mathematically on a discrete pixel grid $\Lambda = \{0, \dots, W-1\} \times \{0, \dots, H-1\}$, a striking unification emerges. In each case, we seek an unknown image $X$ that minimizes a convex quadratic energy functional measuring discrepancy in either pixel intensities or spatial gradients. Setting the first derivative of this energy functional to zero reduces all three problems to solving a large-scale symmetric positive definite (SPD) linear system $A X = b$.
+
+The central computational challenge is dimensionality. Even a modest $500 \times 500$ image contains $N = 250{,}000$ pixels per channel, meaning the explicit matrix $A \in \mathbb{R}^{N \times N}$ would contain $6.25 \times 10^{10}$ entries---far too large to store in memory or invert via Gaussian elimination ($\mathcal{O}(N^3)$). Fortunately, every linear operator arising in convolution and discrete differential geometry is sparse and shift-invariant: we can evaluate the matrix-vector product $v \mapsto A v$ directly on the two-dimensional image grid using small local convolution stencils in $\mathcal{O}(N)$ time without ever forming the matrix $A$. This observation makes iterative Krylov subspace solvers---and specifically the Conjugate Gradient (CG) method---the ideal mathematical engine for variational image restoration.
+
+Alongside variational PDE solvers, we also study geometric front-propagation inpainting via the Fast Marching Method (FMM) introduced by Telea~\cite{telea2004}. While harmonic Poisson inpainting produces smooth membrane interpolants globally, it requires $\mathcal{O}(\operatorname{diam}(\Omega))$ CG iterations for boundary information to diffuse from $\partial\Omega$ to the center of the missing domain $\Omega$, and its isotropic penalty blurs sharp edges that cross the mask. Conversely, Telea's FMM propagates an Eikonal arrival-time front $|\nabla T(x,y)| = 1$ inward in a single $\mathcal{O}(|\Omega|\log|\Omega|)$ pass, but because it never relaxes globally, colliding wave fronts leave visible medial-axis ridge artifacts near the center of large holes.
+
+To overcome the limitations of both classical approaches, Section~\ref{sec_hybrid} introduces a novel two-stage hybrid solver: \textbf{FMM-Warm-Started Structure-Tensor Anisotropic Conjugate Gradient Inpainting}. First, we harmonically interpolate the $2 \times 2$ structure tensor field $J_\sigma = G_{\sigma_w} * (\nabla I \nabla I^T)$ across $\Omega$ to recover the latent edge orientations inside the missing region, constructing a spatially varying spd diffusion tensor $D(x,y)$ that diffuses strongly along edge tangents and weakly across edge normals. Second, we use Telea's non-iterative FMM output $X_{\text{FMM}}$ as a warm-start initial guess $X_0$ for Conjugate Gradient on the anisotropic divergence equation $M_\Omega \odot (G^T D G X) = 0$, simultaneously eliminating FMM's medial-axis seams, preserving sharp cross-boundary edges, and reducing CG iteration counts by nearly an order of magnitude.
+
+\section{Discrete Differential Operators and Adjoint Convolution}\label{sec_ops}
+
+To apply linear algebra and multivariable calculus to two-dimensional images, we treat the space of single-channel images $\mathcal{I} = \mathbb{R}^{W \times H} \cong \mathbb{R}^N$ ($N = W H$) as a finite-dimensional Euclidean inner-product space. For any two images $X, Y \in \mathcal{I}$, their standard inner product and induced $\ell_2$ norm are given by summing pixel-wise products over the lattice $\Lambda$:
+\begin{equation}\label{eq_inner}
+    \langle X, Y \rangle = \sum_{p \in \Lambda} X(p) Y(p), \qquad \|X\|_2 = \sqrt{\langle X, X \rangle}.
+\end{equation}
+For multi-channel color images $X = (X^{(1)}, \dots, X^{(C)})$, the inner product sums Equation~\eqref{eq_inner} across all color channels, and spatial operators act independently on each channel.
+
+\begin{define}[Discrete Convolution Operator and Reflected Kernel]\label{def_conv}
+    Given a two-dimensional filter kernel $K$ supported on $\{-r_x, \dots, r_x\} \times \{-r_y, \dots, r_y\}$, the discrete convolution operator $M_K : \mathcal{I} \to \mathcal{I}$ is defined at each pixel $(i, j) \in \Lambda$ by
+    \begin{equation}\label{eq_conv}
+        (M_K X)(i, j) = (K * X)(i, j) = \sum_{u = -r_x}^{r_x} \sum_{v = -r_y}^{r_y} K(u, v)\, X(i - u, j - v).
+    \end{equation}
+    The reflected (or conjugated) kernel $K^*$ is obtained by flipping $K$ across both spatial axes:
+    \[
+        K^*(u, v) = K(-u, -v).
+    \]
+\end{define}
+
+When we differentiate a quadratic energy functional such as $\frac{1}{2}\|M_K X - Y\|_2^2$, the gradient involves the matrix transpose $M_K^T$. Because we never form the $N \times N$ matrix $M_K$ explicitly, we must know how to compute the action of $M_K^T$ directly as a spatial image filter.
+
+\begin{proposition}[Adjoint of Discrete Convolution]\label{prop_adjoint}
+    Under zero-padded boundary conditions, the adjoint operator $M_K^T : \mathcal{I} \to \mathcal{I}$ satisfying $\langle M_K X, Y \rangle = \langle X, M_K^T Y \rangle$ for all $X, Y \in \mathcal{I}$ is given by convolution with the reflected kernel $K^*$:
+    \[
+        M_K^T Y = K^* * Y.
+    \]
+    In particular, if $K$ is symmetric ($K(-u, -v) = K(u, v)$), then $M_K$ is self-adjoint ($M_K^T = M_K$).
+\end{proposition}
+\begin{proof}
+    Expanding the inner product $\langle M_K X, Y \rangle$ from Definition~\ref{def_conv} and interchanging the order of summation gives
+    \[
+        \langle M_K X, Y \rangle = \sum_{i,j} \left(\sum_{u,v} K(u,v)\, X(i-u, j-v)\right) Y(i,j).
+    \]
+    Making the change of variables $i' = i - u$ and $j' = j - v$ (so that $i = i' + u$ and $j = j' + v$) yields
+    \[
+        \langle M_K X, Y \rangle = \sum_{i', j'} X(i', j') \sum_{u,v} K(u,v)\, Y(i' + u, j' + v).
+    \]
+    Substituting $u' = -u$ and $v' = -v$ into the inner sum transforms it into
+    \[
+        \sum_{u',v'} K(-u', -v')\, Y(i' - u', j' - v') = \sum_{u',v'} K^*(u', v')\, Y(i' - u', j' - v') = (K^* * Y)(i', j'),
+    \]
+    which proves that $\langle M_K X, Y \rangle = \langle X, K^* * Y \rangle$, and hence $M_K^T Y = K^* * Y$.
+\end{proof}
+
+Next, we define the discrete first-order forward difference gradient operator $G = (\nabla_x, \nabla_y)^T : \mathcal{I} \to \mathcal{I} \times \mathcal{I}$ by
+\begin{equation}\label{eq_grad_op}
+    (\nabla_x X)(i, j) = X(i+1, j) - X(i, j), \qquad (\nabla_y X)(i, j) = X(i, j+1) - X(i, j).
+\end{equation}
+The total squared gradient magnitude of an image $X$---known in variational calculus as the \emph{Dirichlet energy}---is $\|G X\|_2^2 = \|\nabla_x X\|_2^2 + \|\nabla_y X\|_2^2$. Minimizing Dirichlet energy requires the composite operator $L = G^T G$.
+
+\begin{proposition}[Discrete Laplacian $L = G^T G$ and Positive Definiteness]\label{prop_laplacian}
+    The operator $L = G^T G = \nabla_x^T \nabla_x + \nabla_y^T \nabla_y : \mathcal{I} \to \mathcal{I}$ is given by convolution with the five-point discrete negative Laplacian stencil:
+    \begin{equation}\label{eq_lap_kernel}
+        (L X)(i, j) = 4 X(i, j) - X(i-1, j) - X(i+1, j) - X(i, j-1) - X(i, j+1), \qquad
+        K_L = \begin{bmatrix} 0 & -1 & 0 \\ -1 & 4 & -1 \\ 0 & -1 & 0 \end{bmatrix}.
+    \end{equation}
+    Furthermore, $L$ is symmetric positive semi-definite ($\langle X, L X \rangle = \|G X\|_2^2 \geq 0$ for all $X \in \mathcal{I}$), and when restricted to a bounded interior mask $\Omega \subset \Lambda$ with fixed Dirichlet boundary values on $\Lambda \setminus \Omega$, the restricted operator $L_\Omega$ is strictly symmetric positive definite ($L_\Omega \succ 0$).
+\end{proposition}
+\begin{proof}
+    By the definition of the adjoint, for any image $X \in \mathcal{I}$ we have
+    \[
+        \langle X, L X \rangle = \langle X, G^T G X \rangle = \langle G X, G X \rangle = \|\nabla_x X\|_2^2 + \|\nabla_y X\|_2^2 \geq 0,
+    \]
+    which proves that $L$ is symmetric positive semi-definite. Applying Proposition~\ref{prop_adjoint} to the horizontal forward difference kernel $K_x = [-1, 1]$ and its reflection $K_x^*$ gives
+    \[
+        (\nabla_x^T \nabla_x X)(i,j) = 2 X(i,j) - X(i-1,j) - X(i+1,j),
+    \]
+    and analogously along the vertical axis,
+    \[
+        (\nabla_y^T \nabla_y X)(i,j) = 2 X(i,j) - X(i,j-1) - X(i,j+1).
+    \]
+    Summing the horizontal and vertical terms yields the five-point stencil in Equation~\eqref{eq_lap_kernel}. Finally, suppose $X$ is supported strictly inside a bounded region $\Omega \subset \Lambda$ (so $X(p) = 0$ for all $p \in \Lambda \setminus \Omega$) and satisfies $\langle X, L X \rangle = 0$. Then $\|\nabla_x X\|_2^2 + \|\nabla_y X\|_2^2 = 0$, which forces $X(i+1,j) = X(i,j)$ and $X(i,j+1) = X(i,j)$ across every grid edge. Because every pixel in $\Omega$ is connected by a finite path to the exterior boundary $\Lambda \setminus \Omega$ where $X = 0$, it follows that $X \equiv 0$ everywhere on $\Omega$. Hence $L_\Omega$ is strictly positive definite.
+\end{proof}
+
+\end{document}
