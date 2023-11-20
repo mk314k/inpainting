@@ -122,4 +122,135 @@ The total squared gradient magnitude of an image $X$---known in variational calc
     Summing the horizontal and vertical terms yields the five-point stencil in Equation~\eqref{eq_lap_kernel}. Finally, suppose $X$ is supported strictly inside a bounded region $\Omega \subset \Lambda$ (so $X(p) = 0$ for all $p \in \Lambda \setminus \Omega$) and satisfies $\langle X, L X \rangle = 0$. Then $\|\nabla_x X\|_2^2 + \|\nabla_y X\|_2^2 = 0$, which forces $X(i+1,j) = X(i,j)$ and $X(i,j+1) = X(i,j)$ across every grid edge. Because every pixel in $\Omega$ is connected by a finite path to the exterior boundary $\Lambda \setminus \Omega$ where $X = 0$, it follows that $X \equiv 0$ everywhere on $\Omega$. Hence $L_\Omega$ is strictly positive definite.
 \end{proof}
 
+\section{Non-Blind Deconvolution and Regularized Conjugate Gradient}\label{sec_deconv}
+
+When a camera lens is out of focus or moves during exposure, each point of light in the true scene $X \in \mathcal{I}$ is spread across neighboring pixels according to a point-spread function (PSF) kernel $K$. Writing $M = M_K$ for the convolution operator, the recorded blurry image $Y \in \mathcal{I}$ satisfies
+\begin{equation}\label{eq_blur_model}
+    Y = K * X + \eta = M X + \eta,
+\end{equation}
+where $\eta$ denotes additive sensor noise. In \emph{non-blind deconvolution}, the blur kernel $K$ is known, and our goal is to recover the sharp latent image $X$ from $Y$.
+
+\subsection{Least-Squares Energy and Steepest Descent}
+In the ideal low-noise setting ($\eta \approx 0$), we seek an image $X \in \mathcal{I}$ whose re-blurred version $M X$ matches the observation $Y$ as closely as possible in the $\ell_2$ sense:
+\begin{equation}\label{eq_deconv_energy}
+    G(X) = \frac{1}{2}\|M X - Y\|_2^2 = \frac{1}{2}\langle M X - Y, M X - Y \rangle.
+\end{equation}
+
+\begin{proposition}[Normal Equations and Exact Line-Search Steepest Descent]\label{prop_sd}
+    The gradient of $G(X)$ in Equation~\eqref{eq_deconv_energy} is given by
+    \begin{equation}\label{eq_deconv_grad}
+        \nabla G(X) = M^T(M X - Y) = M^T M X - M^T Y = -r(X),
+    \end{equation}
+    where $r(X) = M^T Y - M^T M X$ is the normal-equation residual. Given current iterate $X_k$ and nonzero residual $r_k = r(X_k)$, the exact step size $\alpha_k > 0$ that minimizes $G(X_k + \alpha r_k)$ along the ray $r_k$ is
+    \begin{equation}\label{eq_sd_step}
+        \alpha_k = \frac{\langle r_k, r_k \rangle}{\langle r_k, M^T M r_k \rangle} = \frac{\|r_k\|_2^2}{\|M r_k\|_2^2}.
+    \end{equation}
+\end{proposition}
+\begin{proof}
+    For any perturbation $H \in \mathcal{I}$, expanding $G(X + H)$ using Proposition~\ref{prop_adjoint} gives
+    \[
+        G(X + H) = G(X) + \langle M X - Y, M H \rangle + \frac{1}{2}\|M H\|_2^2
+        = G(X) + \langle M^T(M X - Y), H \rangle + \mathcal{O}(\|H\|_2^2),
+    \]
+    which identifies the gradient $\nabla G(X) = M^T M X - M^T Y = -r(X)$. Substituting $H = \alpha r_k$ at iterate $X_k$ yields the one-dimensional quadratic function
+    \[
+        \phi(\alpha) = G(X_k + \alpha r_k) = G(X_k) - \alpha \langle r_k, r_k \rangle + \frac{\alpha^2}{2}\langle r_k, M^T M r_k \rangle.
+    \]
+    Setting $\phi'(\alpha) = -\langle r_k, r_k \rangle + \alpha \langle r_k, M^T M r_k \rangle = 0$ and solving for $\alpha$ gives Equation~\eqref{eq_sd_step}.
+\end{proof}
+
+\subsection{Conjugate Gradient Optimization}
+While Steepest Descent ($X_{k+1} = X_k + \alpha_k r_k$) is simple to implement, consecutive residuals satisfy $\langle r_{k+1}, r_k \rangle = 0$ in the Euclidean inner product, forcing the iterates to zig-zag repeatedly across elongated quadratic valleys where the Hessian $A = M^T M$ is ill-conditioned. The Conjugate Gradient (CG) method eliminates this zig-zagging by constructing search directions $d_0, d_1, \dots, d_k$ that are mutually $A$-orthogonal: $\langle d_i, A d_j \rangle = 0$ for all $i \neq j$.
+
+\begin{theorem}[Conjugate Gradient Recurrence and Krylov Optimality]\label{thm_cg}
+    Let $A : \mathcal{I} \to \mathcal{I}$ be a symmetric positive definite linear operator and let $b \in \mathcal{I}$. Starting from an initial guess $X_0$, residual $r_0 = b - A X_0$, and initial search direction $d_0 = r_0$, the iterative recurrence
+    \begin{align}
+        \alpha_k &= \frac{\langle r_k, r_k \rangle}{\langle d_k, A d_k \rangle}, \label{eq_cg_alpha} \\
+        X_{k+1} &= X_k + \alpha_k d_k, \qquad r_{k+1} = r_k - \alpha_k A d_k, \label{eq_cg_update} \\
+        \beta_k &= \frac{\langle r_{k+1}, r_{k+1} \rangle}{\langle r_k, r_k \rangle}, \qquad d_{k+1} = r_{k+1} + \beta_k d_k, \label{eq_cg_beta}
+    \end{align}
+    generates mutually $A$-conjugate directions $\langle d_i, A d_j \rangle = 0$ ($i \neq j$) and mutually orthogonal residuals $\langle r_i, r_j \rangle = 0$ ($i \neq j$). Furthermore, after $k$ steps, $X_k$ is the exact global minimizer of $\Phi(X) = \frac{1}{2}\langle X, A X \rangle - \langle b, X \rangle$ over the affine Krylov subspace
+    \[
+        X_0 + \mathcal{K}_k(A, r_0) = X_0 + \operatorname{span}\{r_0, A r_0, \dots, A^{k-1} r_0\}.
+    \]
+\end{theorem}
+\begin{proof}
+    We establish the orthogonality relations by induction on $k$. For $k = 0$, since $d_0 = r_0$, the inner product of $r_1$ and $r_0$ is
+    \[
+        \langle r_1, r_0 \rangle = \langle r_0 - \alpha_0 A d_0, r_0 \rangle = \langle r_0, r_0 \rangle - \frac{\langle r_0, r_0 \rangle}{\langle d_0, A d_0 \rangle}\langle d_0, A d_0 \rangle = 0.
+    \]
+    Now suppose $\langle r_i, r_j \rangle = 0$ and $\langle d_i, A d_j \rangle = 0$ for all $0 \leq j < i \leq k$. Since $d_k = r_k + \beta_{k-1} d_{k-1}$ and $\langle r_k, d_{k-1} \rangle = 0$, we have $\langle r_k, d_k \rangle = \langle r_k, r_k \rangle$. The exact line-search step size along $d_k$ is therefore $\alpha_k = \frac{\langle r_k, d_k \rangle}{\langle d_k, A d_k \rangle} = \frac{\langle r_k, r_k \rangle}{\langle d_k, A d_k \rangle}$, which guarantees $\langle r_{k+1}, d_k \rangle = 0$. To make $d_{k+1} = r_{k+1} + \beta_k d_k$ satisfy $\langle d_{k+1}, A d_k \rangle = 0$, we require
+    \[
+        \beta_k = -\frac{\langle r_{k+1}, A d_k \rangle}{\langle d_k, A d_k \rangle}.
+    \]
+    Using Equation~\eqref{eq_cg_update}, we substitute $A d_k = \frac{1}{\alpha_k}(r_k - r_{k+1})$ and $\langle r_{k+1}, r_k \rangle = 0$ to obtain
+    \[
+        \beta_k = -\frac{\langle r_{k+1}, r_k - r_{k+1} \rangle}{\alpha_k \langle d_k, A d_k \rangle}
+        = \frac{\langle r_{k+1}, r_{k+1} \rangle}{\langle r_k, r_k \rangle}.
+    \]
+    Because $\{d_0, \dots, d_{k-1}\}$ is an $A$-orthogonal basis of $\mathcal{K}_k(A, r_0)$, minimizing $\Phi(X)$ over $X_0 + \mathcal{K}_k(A, r_0)$ decomposes into $k$ independent one-dimensional minimizations along $d_0, \dots, d_{k-1}$, each solved exactly by $\alpha_j$.
+\end{proof}
+
+Figure~\ref{fig:exp_deconv} demonstrates the empirical advantage of $A$-conjugate directions over Steepest Descent on a Gaussian-blurred $128 \times 128$ scene ($\sigma = 1.6$, input $\text{PSNR} = 22.41\text{ dB}$). After $20$ iterations, Steepest Descent reaches $25.00\text{ dB}$, whereas Conjugate Gradient reaches $25.83\text{ dB}$ with noticeably crisper recovery of the foreground checkerboard and ring targets.
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.98\textwidth]{fig1_deconv.png}
+    \caption{Non-blind deconvolution of a Gaussian-blurred scene ($\sigma = 1.6$, input $\text{PSNR} = 22.41\text{ dB}$). Steepest Descent reaches $25.00\text{ dB}$ after $20$ iterations, whereas Conjugate Gradient reaches $25.83\text{ dB}$ with sharper checkerboard and ring edges.}
+    \label{fig:exp_deconv}
+\end{figure}
+
+\subsection{Tikhonov--Laplacian Regularized Deconvolution}
+When $Y = M X + \eta$ contains additive noise $\eta$, small singular values of $M$ at high spatial frequencies cause unregularized CG to amplify noise. To stabilize the inversion, we augment $G(X)$ with a Tikhonov smoothness prior that penalizes the Dirichlet gradient energy $\|G X\|_2^2 = \langle X, L X \rangle$ with weight $\lambda > 0$:
+\begin{equation}\label{eq_reg_energy}
+    G_\lambda(X) = \frac{1}{2}\|M X - Y\|_2^2 + \frac{\lambda}{2}\|G X\|_2^2 = \frac{1}{2}\|M X - Y\|_2^2 + \frac{\lambda}{2}\langle X, L X \rangle.
+\end{equation}
+
+\begin{proposition}[Regularized Normal Operator and Structure-Guided Anisotropic Extension]\label{prop_reg_op}
+    The global minimizer of the isotropic regularized energy $G_\lambda(X)$ in Equation~\eqref{eq_reg_energy} satisfies the symmetric positive definite normal equation
+    \begin{equation}\label{eq_reg_normal}
+        A_\lambda X = (M^T M + \lambda L) X = M^T Y.
+    \end{equation}
+    More generally, replacing the isotropic penalty $\langle X, L X \rangle$ with the structure-tensor-weighted Dirichlet penalty $\langle G X, D G X \rangle = \langle X, L_D X \rangle$ (where $L_D = G^T D G$ suppresses smoothing across strong image edges) yields the edge-preserving SPD system $(M^T M + \lambda L_D) X = M^T Y$.
+\end{proposition}
+\begin{proof}
+    Differentiating the first term of $G_\lambda(X)$ via Proposition~\ref{prop_sd} gives $M^T M X - M^T Y$, and differentiating $\frac{\lambda}{2}\langle X, L X \rangle$ (or $\frac{\lambda}{2}\langle X, L_D X \rangle$) using the symmetry of $L$ and $L_D$ gives $\lambda L X$ (or $\lambda L_D X$). Setting the total gradient to zero yields Equation~\eqref{eq_reg_normal}.
+\end{proof}
+
+\begin{algorithm}[H]
+\caption{Matrix-Free Tikhonov--Laplacian Conjugate Gradient Deconvolution}\label{alg:deconv_cg}
+\KwIn{Blurred observation $Y \in \mathcal{I}$, PSF kernel $K$, regularization weight $\lambda \geq 0$, max iterations $N_{\text{iter}}$, tolerance $\varepsilon_{\text{tol}}$}
+\KwOut{Restored sharp image $X \in \mathcal{I}$}
+\Fn{$\operatorname{ApplyNormalOp}(V, K, \lambda)$}{
+    \Return $K^* * (K * V) + \lambda (K_L * V)$
+}
+$X \gets Y$\;
+$r \gets (K^* * Y) - \operatorname{ApplyNormalOp}(X, K, \lambda)$\;
+$d \gets r$\;
+$\rho \gets \langle r, r \rangle$\;
+\For{$k \gets 0$ \KwTo $N_{\text{iter}} - 1$}{
+    \If{$\sqrt{\rho} < \varepsilon_{\text{tol}}$}{
+        \textbf{break}
+    }
+    $q \gets \operatorname{ApplyNormalOp}(d, K, \lambda)$\;
+    $\alpha \gets \rho / \langle d, q \rangle$\;
+    $X \gets X + \alpha d$\;
+    $r \gets r - \alpha q$\;
+    $\rho_{\text{next}} \gets \langle r, r \rangle$\;
+    $\beta \gets \rho_{\text{next}} / \rho$\;
+    $d \gets r + \beta d$\;
+    $\rho \gets \rho_{\text{next}}$\;
+}
+\Return $\operatorname{clamp}(X, 0, 1)$
+\end{algorithm}
+
+Figure~\ref{fig:exp_reg_deconv} illustrates the necessity of regularization when the blurred observation is corrupted by additive Gaussian sensor noise ($\sigma_\eta = 0.032$, input $\text{PSNR} = 21.67\text{ dB}$). Unregularized Conjugate Gradient ($\lambda = 0$) inverts small high-frequency PSF singular values and amplifies noise, dropping PSNR to $16.20\text{ dB}$. Isotropic Tikhonov--Laplacian regularization ($\lambda L, \lambda = 0.045$) suppresses ringing and recovers $23.24\text{ dB}$, while our **Structure-Guided Anisotropic CG** ($\lambda L_D, \lambda = 0.045$) preserves sharper edges and reaches $\mathbf{24.08\text{ dB}}$ ($+0.84\text{ dB}$ over isotropic regularization).
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.98\textwidth]{fig2_reg_deconv.png}
+    \caption{Deconvolution under additive Gaussian sensor noise ($\sigma_\eta = 0.032$, input $\text{PSNR} = 21.67\text{ dB}$). Unregularized CG ($\lambda = 0$) degrades to $16.20\text{ dB}$; isotropic Tikhonov--Laplacian CG ($\lambda L$) recovers $23.24\text{ dB}$; and our structure-guided anisotropic CG ($\lambda L_D$) achieves $\mathbf{24.08\text{ dB}}$.}
+    \label{fig:exp_reg_deconv}
+\end{figure}
+
 \end{document}
