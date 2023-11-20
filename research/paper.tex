@@ -253,4 +253,216 @@ Figure~\ref{fig:exp_reg_deconv} illustrates the necessity of regularization when
     \label{fig:exp_reg_deconv}
 \end{figure}
 
+\section{Variational Poisson Seamless Cloning}\label{sec_poisson}
+
+Suppose we wish to extract a foreground object from a source image $F \in \mathcal{I}$ inside a region $\Omega \subset \Lambda$ (with binary mask $M_\Omega \in \{0,1\}^{W \times H}$) and composite it onto a destination background $B \in \mathcal{I}$. Direct copy-paste compositing ($X_{\text{naive}} = M_\Omega \odot F + (1 - M_\Omega) \odot B$) produces a visible seam along $\partial\Omega$. Following P\'erez et al.~\cite{perez2003}, seamless cloning seeks a composite image $X \in \mathcal{I}$ that matches $B$ outside $\Omega$ while matching the spatial gradients $G F$ inside $\Omega$:
+\begin{equation}\label{eq_poisson_var}
+    \min_{X \in \mathcal{I}} E(X) = \frac{1}{2}\|G X - G F\|_{\Omega}^2 \qquad \text{subject to} \quad X(p) = B(p) \quad \forall p \in \Lambda \setminus \Omega.
+\end{equation}
+
+\begin{proposition}[Discrete Poisson Equation with Dirichlet Boundary]\label{prop_poisson}
+    A composite image $X \in \mathcal{I}$ satisfying the boundary constraint $(1 - M_\Omega) \odot X = (1 - M_\Omega) \odot B$ minimizes the variational gradient energy~\eqref{eq_poisson_var} if and only if its interior pixels on $\Omega$ satisfy the discrete Poisson equation:
+    \begin{equation}\label{eq_poisson_pde}
+        M_\Omega \odot (L X) = M_\Omega \odot (L F).
+    \end{equation}
+\end{proposition}
+\begin{proof}
+    Decompose any admissible candidate image as $X = (1 - M_\Omega) \odot B + M_\Omega \odot U$, where $U$ is supported strictly inside $\Omega$. Differentiating $E(X) = \frac{1}{2}\langle G X - G F, G X - G F \rangle$ with respect to the interior variables $M_\Omega \odot X$ using $G^T G = L$ yields the masked Euler--Lagrange optimality condition:
+    \[
+        M_\Omega \odot \nabla E(X) = M_\Omega \odot G^T(G X - G F) = M_\Omega \odot (L X - L F) = 0.
+    \]
+    By Proposition~\ref{prop_laplacian}, the restricted operator $L_\Omega(V) = M_\Omega \odot L(M_\Omega \odot V)$ is strictly SPD on $\Omega$, guaranteeing a unique global minimizer.
+\end{proof}
+
+Furthermore, to prevent flat regions of the foreground patch $F$ from erasing salient background textures in $B$, we can replace the source gradient $G F$ at each pixel $p \in \Omega$ with the structure-dominant mixed gradient field $v^*(p) = G B(p)$ if $\|G B(p)\|_2 > \|G F(p)\|_2$ and $G F(p)$ otherwise, solving $M_\Omega \odot (L X) = M_\Omega \odot (G^T v^*)$.
+
+\begin{algorithm}[H]
+\caption{Masked Conjugate Gradient Solver for Poisson Seamless Cloning}\label{alg:poisson_cg}
+\KwIn{Destination background $B \in \mathcal{I}$, foreground source $F \in \mathcal{I}$, binary mask $M_\Omega \in \{0,1\}^{W \times H}$, max iterations $N_{\text{iter}}$, tolerance $\varepsilon_{\text{tol}}$}
+\KwOut{Seamlessly cloned composite image $X \in \mathcal{I}$}
+$X \gets B$\;
+$b \gets K_L * F$\;
+$r \gets M_\Omega \odot (b - K_L * X)$\;
+$d \gets r$\;
+$\rho \gets \langle r, r \rangle$\;
+\For{$k \gets 0$ \KwTo $N_{\text{iter}} - 1$}{
+    \If{$\sqrt{\rho} < \varepsilon_{\text{tol}}$}{
+        \textbf{break}
+    }
+    $q \gets M_\Omega \odot (K_L * d)$\;
+    $\alpha \gets \rho / \langle d, q \rangle$\;
+    $X \gets X + \alpha d$\;
+    $r \gets M_\Omega \odot (r - \alpha q)$\;
+    $\rho_{\text{next}} \gets \langle r, r \rangle$\;
+    $\beta \gets \rho_{\text{next}} / \rho$\;
+    $d \gets r + \beta d$\;
+    $\rho \gets \rho_{\text{next}}$\;
+}
+\Return $\operatorname{clamp}(X, 0, 1)$
+\end{algorithm}
+
+Figure~\ref{fig:exp_poisson} compares direct copy-paste compositing against Algorithm~\ref{alg:poisson_cg} ($160$ iterations). While direct copy-paste leaves a stark boundary discontinuity along $\partial\Omega$ due to the mismatch between the sandy foreground background and the twilight target domain, Masked Conjugate Gradient integrates the interior gradients $G F$ seamlessly into the destination boundary condition $\left.B\right|_{\partial\Omega}$.
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.98\textwidth]{fig3_poisson.png}
+    \caption{Variational Poisson seamless cloning via Masked Conjugate Gradient ($160$ iterations). Direct copy-paste leaves a harsh boundary seam along $\partial\Omega$, whereas solving $M_\Omega \odot (L X) = M_\Omega \odot (L F)$ seamlessly integrates the foreground gradients into the target background.}
+    \label{fig:exp_poisson}
+\end{figure}
+
+\section{Image Inpainting: Harmonic PDE, Fast Marching, and Structure-Guided Hybrid CG}\label{sec_inpaint}
+
+In digital image inpainting, we are given an image $I \in \mathcal{I}$ in which a masked region $\Omega \subset \Lambda$ is occluded or damaged, and we wish to reconstruct $X$ inside $\Omega$ from the known exterior $\Lambda \setminus \Omega$. We first review the two classical formulations---harmonic PDE relaxation and Telea's Fast Marching Method---and then introduce our hybrid \textbf{FMM-Warm-Started Structure-Tensor Anisotropic CG} solver.
+
+\subsection{Harmonic (Laplace--Dirichlet) PDE Inpainting}
+Setting the foreground guidance field in Equation~\eqref{eq_poisson_var} to zero ($F \equiv 0$) seeks the surface of minimum Dirichlet membrane energy $\min_X \frac{1}{2}\|G X\|_\Omega^2$ spanning the boundary values $\left.I\right|_{\partial\Omega}$, which satisfies the discrete Laplace equation:
+\begin{equation}\label{eq_harmonic_inpaint}
+    M_\Omega \odot (L X) = 0 \quad \text{in } \Omega, \qquad (1 - M_\Omega) \odot X = (1 - M_\Omega) \odot I.
+\end{equation}
+
+\subsection{Telea's Eikonal Fast Marching Inpainting}
+Rather than relaxing all pixels in $\Omega$ simultaneously, Telea~\cite{telea2004} evolves the boundary $\partial\Omega$ inward at unit speed via the Eikonal equation:
+\begin{equation}\label{eq_eikonal}
+    |\nabla T(x, y)| = 1 \quad \text{for } (x, y) \in \Omega, \qquad T(x, y) = 0 \quad \text{for } (x, y) \in \Lambda \setminus \Omega.
+\end{equation}
+
+\begin{proposition}[Upwind Quadrant Discretization of the Eikonal Equation]\label{prop_eikonal}
+    At a narrow-band pixel $(i, j) \in \Omega$, let $T_x = \min(T(i-1,j), T(i+1,j))$ and $T_y = \min(T(i,j-1), T(i,j+1))$ denote the minimum arrival times among already-frozen (`KNOWN`) horizontal and vertical neighbors. The upwind finite-difference approximation to $|\nabla T(i,j)|^2 = 1$ is
+    \begin{equation}\label{eq_upwind}
+        \max(T(i,j) - T_x, 0)^2 + \max(T(i,j) - T_y, 0)^2 = 1,
+    \end{equation}
+    whose unique causal solution is given by
+    \begin{equation}\label{eq_eikonal_sol}
+        T(i, j) = \begin{cases}
+            \frac{T_x + T_y + \sqrt{2 - (T_x - T_y)^2}}{2} & \text{if } |T_x - T_y| < 1, \\
+            \min(T_x, T_y) + 1 & \text{if } |T_x - T_y| \geq 1.
+        \end{cases}
+    \end{equation}
+\end{proposition}
+\begin{proof}
+    When $|T_x - T_y| < 1$, the wave front approaches $(i,j)$ obliquely from both grid axes, so $T(i,j) > \max(T_x, T_y)$. Equation~\eqref{eq_upwind} reduces to the quadratic $(T - T_x)^2 + (T - T_y)^2 = 1 \iff 2T^2 - 2(T_x + T_y)T + (T_x^2 + T_y^2 - 1) = 0$, whose larger root is $T = \frac{1}{2}(T_x + T_y + \sqrt{2 - (T_x - T_y)^2})$. When $|T_x - T_y| \geq 1$, only the smaller neighbor $\min(T_x, T_y)$ is upwind, reducing Equation~\eqref{eq_upwind} to $(T - \min(T_x, T_y))^2 = 1 \implies T = \min(T_x, T_y) + 1$.
+\end{proof}
+
+Each narrow-band pixel $p = (i, j)$ popped from the min-heap is inpainted via a first-order Taylor weighted average over known neighbors $q \in B_\varepsilon(p)$:
+\begin{equation}\label{eq_telea_interp}
+    X(p) = \frac{\sum_{q \in B_\varepsilon(p) \cap \text{KNOWN}} w(p, q)\,\big[X(q) + \nabla X(q) \cdot (p - q)\big]}{\sum_{q \in B_\varepsilon(p) \cap \text{KNOWN}} w(p, q)},
+\end{equation}
+where $w(p, q) = \operatorname{dir}(p, q) \cdot \operatorname{dst}(p, q) \cdot \operatorname{lev}(p, q)$ combines directional, geometric-distance, and level-set weights:
+\begin{equation}\label{eq_telea_weights}
+    \operatorname{dir}(p, q) = \frac{|(p - q) \cdot \nabla T(p)|}{\|p - q\|_2 \|\nabla T(p)\|_2}, \quad
+    \operatorname{dst}(p, q) = \frac{1}{\|p - q\|_2^2}, \quad
+    \operatorname{lev}(p, q) = \frac{1}{1 + |T(p) - T(q)|}.
+\end{equation}
+
+\begin{algorithm}[H]
+\caption{Telea Eikonal Fast Marching Method (FMM) Inpainting}\label{alg:fmm}
+\KwIn{Corrupted image $I \in \mathcal{I}$, binary mask $M_\Omega \in \{0,1\}^{W \times H}$, neighborhood radius $\varepsilon$}
+\KwOut{Fast-marched inpainted image $X_{\text{FMM}} \in \mathcal{I}$}
+$X \gets (1 - M_\Omega) \odot I$\;
+\For{each pixel $p \in \Lambda$}{
+    \eIf{$M_\Omega(p) == 0$}{
+        $\text{state}(p) \gets \text{KNOWN}$, \quad $T(p) \gets 0$
+    }{
+        $\text{state}(p) \gets \text{INSIDE}$, \quad $T(p) \gets \infty$
+    }
+}
+Initialize empty min-heap priority queue $\mathcal{H}$\;
+\For{each pixel $p \in \Omega$ adjacent to at least one $\text{KNOWN}$ $4$-neighbor}{
+    $\text{state}(p) \gets \text{BAND}$\;
+    Compute $T(p)$ via Proposition~\ref{prop_eikonal} and push $(T(p), p)$ into $\mathcal{H}$\;
+}
+\While{$\mathcal{H}$ is not empty}{
+    Pop $(T(p), p)$ with minimum arrival time from $\mathcal{H}$\;
+    \If{$\text{state}(p) == \text{KNOWN}$}{
+        \textbf{continue}
+    }
+    $\text{state}(p) \gets \text{KNOWN}$\;
+    \For{each $4$-neighbor $q$ of $p$ with $\text{state}(q) \neq \text{KNOWN}$}{
+        \If{$\text{state}(q) == \text{INSIDE}$}{
+            Compute $X(q)$ via Equations~\eqref{eq_telea_interp}--\eqref{eq_telea_weights} over $\text{KNOWN}$ pixels in $B_\varepsilon(q)$\;
+            $\text{state}(q) \gets \text{BAND}$\;
+        }
+        Update $T(q)$ via Proposition~\ref{prop_eikonal} and push $(T(q), q)$ into $\mathcal{H}$\;
+    }
+}
+\Return $X$
+\end{algorithm}
+
+\subsection{FMM-Warm-Started Structure-Tensor Anisotropic CG Inpainting}\label{sec_hybrid}
+
+We now examine the complementary limitations of the two classical methods above:
+\begin{enumerate}
+    \item \textbf{Isotropic Blurring and Slow Cold-Start Propagation in Harmonic CG:} When Algorithm~\ref{alg:poisson_cg} is initialized with $X_0 = (1 - M_\Omega) \odot I$, the interior of $\Omega$ starts at zero, creating a large discontinuity along $\partial\Omega$. Because each application of the 5-point stencil $K_L$ propagates boundary data inward by only one grid cell, at least $\operatorname{rad}(\Omega)$ iterations are required before the center of the hole receives any nonzero signal. Moreover, the isotropic penalty $\|G X\|_\Omega^2$ diffuses equally across and along edges, blurring sharp contours that traverse $\Omega$.
+    \item \textbf{Medial-Axis Ridge Seams in Fast Marching:} While Telea's FMM (Algorithm~\ref{alg:fmm}) fills $\Omega$ in a single causal pass and transports directional gradients inward, opposing wave fronts colliding along the medial axis (skeleton) of $\Omega$ never undergo mutual elliptic relaxation, leaving visible crease seams in larger masks.
+\end{enumerate}
+
+To resolve both limitations simultaneously, we introduce a novel two-stage hybrid solver that couples **structure-tensor-guided anisotropic diffusion** with **FMM Krylov warm-starting**.
+
+First, given the corrupted image $I$, we compute its regularized $2 \times 2$ structure tensor outside $\Omega$,
+\begin{equation}\label{eq_struct_tensor}
+    J_\sigma(p) = G_{\sigma_w} * \begin{bmatrix} (\nabla_x I_\sigma)^2 & (\nabla_x I_\sigma)(\nabla_y I_\sigma) \\ (\nabla_x I_\sigma)(\nabla_y I_\sigma) & (\nabla_y I_\sigma)^2 \end{bmatrix}(p),
+\end{equation}
+and harmonically interpolate the three tensor channels $(J_{xx}, J_{xy}, J_{yy})$ across $\Omega$ by solving $M_\Omega \odot (L J) = 0$. At each pixel $p \in \Omega$, the interpolated symmetric positive semi-definite tensor $J(p)$ has closed-form eigenvalues $\lambda_1(p) \geq \lambda_2(p) \geq 0$ with orthogonal unit eigenvectors $v_1(p)$ (normal to the local edge) and $v_2(p)$ (tangent to the local edge, i.e., the isophote direction). We construct the spatially varying anisotropic conductivity tensor
+\begin{equation}\label{eq_aniso_tensor}
+    D(p) = g(\lambda_1(p))\, v_1(p) v_1(p)^T + 1 \cdot v_2(p) v_2(p)^T, \qquad g(s) = \frac{1}{1 + s / \kappa^2} \in (0, 1],
+\end{equation}
+which assigns full conductivity ($1$) along the edge tangent $v_2(p)$ and suppressed conductivity $g(\lambda_1(p)) \ll 1$ across strong edges ($\lambda_1(p) \gg \kappa^2$). Minimizing the resulting anisotropic Dirichlet energy
+\begin{equation}\label{eq_aniso_energy}
+    E_D(X) = \frac{1}{2}\sum_{p \in \Omega} \langle G X(p), D(p) G X(p) \rangle \qquad \text{subject to} \quad (1 - M_\Omega) \odot X = (1 - M_\Omega) \odot I
+\end{equation}
+yields the Euler--Lagrange equation $M_\Omega \odot (L_D X) = 0$, where $L_D = G^T D G$.
+
+\begin{theorem}[Positive Definiteness and FMM Warm-Start Acceleration]\label{thm_hybrid}
+    For any finite edge threshold $\kappa > 0$, the anisotropic divergence operator $L_D = G^T D G$ restricted to a bounded interior mask $\Omega \subset \Lambda$ with Dirichlet boundary conditions on $\Lambda \setminus \Omega$ is strictly symmetric positive definite ($L_{D,\Omega} \succ 0$), and its condition number satisfies $\kappa(L_{D,\Omega}) \leq \gamma^{-1} \kappa(L_\Omega)$, where $\gamma = \min_{p \in \Omega} g(\lambda_1(p)) > 0$. Furthermore, initializing Conjugate Gradient with the Fast Marching solution $X_0 = X_{\text{FMM}}$ rather than $X_0^{\text{cold}} = (1 - M_\Omega) \odot I$ bounds the $k$-step error in the $L_{D,\Omega}$-norm by
+    \begin{equation}\label{eq_cg_bound}
+        \|X_k - X^*\|_{L_{D,\Omega}} \leq 2\left(\frac{\sqrt{\kappa(L_{D,\Omega})} - 1}{\sqrt{\kappa(L_{D,\Omega})} + 1}\right)^k \|X_{\text{FMM}} - X^*\|_{L_{D,\Omega}},
+    \end{equation}
+    eliminating the $\mathcal{O}(\operatorname{rad}(\Omega))$ boundary-to-center propagation delay of cold-started CG.
+\end{theorem}
+\begin{proof}
+    At every pixel $p \in \Omega$, $v_1(p)$ and $v_2(p)$ form an orthonormal basis of $\mathbb{R}^2$, and $D(p)$ has eigenvalues $g(\lambda_1(p)) \in [\gamma, 1]$ and $1$, where $\gamma = (1 + \max_{p \in \Omega} \lambda_1(p) / \kappa^2)^{-1} > 0$. Since $D(p)^T = D(p)$, the composite operator $L_D = G^T D G$ is symmetric ($L_D^T = G^T D^T G = L_D$) and satisfies the Rayleigh quotient sandwich bound
+    \[
+        \gamma \langle X, L X \rangle = \gamma \|G X\|_2^2 \leq \langle X, G^T D G X \rangle \leq \|G X\|_2^2 = \langle X, L X \rangle \qquad \forall X \in \mathcal{I}.
+    \]
+    By Proposition~\ref{prop_laplacian}, $L_\Omega \succ 0$ on images supported in $\Omega$, which implies $L_{D,\Omega} \succeq \gamma L_\Omega \succ 0$ and $\kappa(L_{D,\Omega}) \leq \gamma^{-1}\kappa(L_\Omega)$. Applying the classical Chebyshev polynomial bound on $\mathcal{K}_k(L_{D,\Omega}, r_0)$ to the initial iterate $X_0 = X_{\text{FMM}}$ immediately yields Equation~\eqref{eq_cg_bound}. Because $X_{\text{FMM}}$ satisfies the Dirichlet boundary condition continuously across $\partial\Omega$ with bounded interior gradient $\|G X_{\text{FMM}}\|_\Omega$, $\|X_{\text{FMM}} - X^*\|_{L_{D,\Omega}} \ll \|X_0^{\text{cold}} - X^*\|_{L_{D,\Omega}}$, removing the $\mathcal{O}(\operatorname{rad}(\Omega))$ cold-start lag.
+\end{proof}
+
+\begin{algorithm}[H]
+\caption{FMM-Warm-Started Structure-Tensor Anisotropic CG Inpainting}\label{alg:hybrid_inpaint}
+\KwIn{Corrupted image $I \in \mathcal{I}$, binary mask $M_\Omega \in \{0,1\}^{W \times H}$, edge threshold $\kappa$, FMM radius $\varepsilon$, CG iterations $N_{\text{iter}}$}
+\KwOut{Structure-preserving inpainted image $X \in \mathcal{I}$}
+$X_{\text{FMM}} \gets \operatorname{TeleaFMM}(I, M_\Omega, \varepsilon)$ \tcp*{Stage 1: O(|Omega| log |Omega|) Eikonal warm start}
+Compute exterior structure tensor $J \gets (1 - M_\Omega) \odot J_\sigma(X_{\text{FMM}})$\;
+Interpolate $J$ across $\Omega$ by solving $M_\Omega \odot (L J) = 0$ via Algorithm~\ref{alg:poisson_cg}\;
+\For{each pixel $p \in \Omega$}{
+    Compute eigenvalues $\lambda_1(p) \geq \lambda_2(p)$ and eigenvectors $v_1(p), v_2(p)$ of $J(p)$\;
+    $D(p) \gets \frac{1}{1 + \lambda_1(p)/\kappa^2}\, v_1(p)v_1(p)^T + v_2(p)v_2(p)^T$\;
+}
+$X \gets X_{\text{FMM}}$ \tcp*{Stage 2: Anisotropic CG relaxation from FMM warm start}
+$r \gets -M_\Omega \odot (G^T D G X)$\;
+$d \gets r$, \quad $\rho \gets \langle r, r \rangle$\;
+\For{$k \gets 0$ \KwTo $N_{\text{iter}} - 1$}{
+    \If{$\sqrt{\rho} < \varepsilon_{\text{tol}}$}{
+        \textbf{break}
+    }
+    $q \gets M_\Omega \odot (G^T D G d)$\;
+    $\alpha \gets \rho / \langle d, q \rangle$\;
+    $X \gets X + \alpha d$\;
+    $r \gets M_\Omega \odot (r - \alpha q)$\;
+    $\rho_{\text{next}} \gets \langle r, r \rangle$\;
+    $d \gets r + (\rho_{\text{next}} / \rho) d$\;
+    $\rho \gets \rho_{\text{next}}$\;
+}
+\Return $\operatorname{clamp}(X, 0, 1)$
+\end{algorithm}
+
+Figure~\ref{fig:exp_inpaint} and Table~\ref{tab:bench_summary} compare the three inpainting formulations on a corrupted scene containing both diagonal scratches and wide rectangular occlusions crossing mountain ridges and foreground targets. Cold-started Harmonic CG ($40$ iterations) suffers from boundary-to-center diffusion lag and isotropic blurring ($\text{PSNR} = 37.46\text{ dB}$), while standalone Telea FMM completes in a single causal pass ($\text{PSNR} = 36.58\text{ dB}$) but exhibits slight directional streaking along medial-axis collisions. Our hybrid \textbf{FMM-Warm-Started Structure-Tensor Anisotropic CG} (Algorithm~\ref{alg:hybrid_inpaint}, $40$ iterations) achieves $\mathbf{40.27\text{ dB}}$---outperforming cold-started Harmonic CG by $+2.81\text{ dB}$ and standalone FMM by $+3.69\text{ dB}$.
+
+\begin{figure}[ht]
+    \centering
+    \includegraphics[width=0.98\textwidth]{fig4_inpaint.png}
+    \caption{Comparison of digital inpainting algorithms across diagonal scratches and rectangular occlusions. Cold-started Harmonic CG ($40$ iterations) achieves $37.46\text{ dB}$, Telea's single-pass Eikonal FMM achieves $36.58\text{ dB}$, and our hybrid \textbf{FMM-Warm-Started Structure-Tensor Anisotropic CG} ($40$ iterations) achieves $\mathbf{40.27\text{ dB}}$ ($+2.81\text{ dB}$ over cold harmonic CG and $+3.69\text{ dB}$ over standalone FMM).}
+    \label{fig:exp_inpaint}
+\end{figure}
+
 \end{document}
