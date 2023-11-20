@@ -465,4 +465,63 @@ Figure~\ref{fig:exp_inpaint} and Table~\ref{tab:bench_summary} compare the three
     \label{fig:exp_inpaint}
 \end{figure}
 
+\section{Quantitative Summary and Discussion}\label{sec_results}
+
+Table~\ref{tab:bench_summary} summarizes the quantitative reconstruction quality (PSNR in dB) across all variational deconvolution and inpainting experiments.
+
+\begin{table}[ht]
+\centering
+\caption{Quantitative PSNR Comparison Across Variational Restoration and Inpainting Benchmarks}
+\label{tab:bench_summary}
+\begin{tabular}{|l|l|c|c|}
+\hline
+\textbf{Task} & \textbf{Solver / Method} & \textbf{Iterations} & \textbf{PSNR (dB)} \\
+\hline
+Non-Blind Deconvolution ($\sigma=1.6$) & Blurred Input $Y = K * X$ & --- & $22.41$ \\
+ & Steepest Descent (Prop.~3.1) & $20$ & $25.00$ \\
+ & \textbf{Conjugate Gradient (Thm.~3.2)} & $\mathbf{20}$ & $\mathbf{25.83}$ \\
+\hline
+Noisy Deconvolution ($\sigma_\eta=0.032$) & Noisy Blurred Input $Y = KX + \eta$ & --- & $21.67$ \\
+ & Unregularized CG ($\lambda = 0$) & $18$ & $16.20$ \\
+ & Isotropic Tikhonov--Laplacian CG ($\lambda L$, $\lambda = 0.045$) & $18$ & $23.24$ \\
+ & \textbf{Structure-Guided Anisotropic CG ($\lambda L_D$, Ours)} & $\mathbf{18}$ & $\mathbf{24.08}$ \\
+\hline
+Digital Image Inpainting & Cold-Started Harmonic CG (Sec.~5.1) & $10$ & $36.69$ \\
+ & Cold-Started Harmonic CG (Sec.~5.1) & $40$ & $37.46$ \\
+ & Telea Eikonal Fast Marching (Alg.~3, Non-Iterative) & $1$ pass & $36.58$ \\
+ & \textbf{Hybrid FMM-Structure Anisotropic CG (Alg.~4, Ours)} & $\mathbf{10}$ & $\mathbf{40.14}$ \\
+ & \textbf{Hybrid FMM-Structure Anisotropic CG (Alg.~4, Ours)} & $\mathbf{40}$ & $\mathbf{40.27}$ \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{thebibliography}{9}
+
+\bibitem{perez2003}
+P.~P\'erez, M.~Gangnet, and A.~Blake,
+\emph{Poisson Image Editing},
+ACM Transactions on Graphics (SIGGRAPH), 22(3):313--318, 2003.
+
+\bibitem{telea2004}
+A.~Telea,
+\emph{An Image Inpainting Technique Based on the Fast Marching Method},
+Journal of Graphics Tools, 9(1):23--34, 2004.
+
+\bibitem{facciolo2013}
+E.~Meinhardt-Llopis, G.~Facciolo, and M.~Arias,
+\emph{Poisson Editing: A Review and New Extensions},
+Image Processing On Line (IPOL), 3:163--185, 2013.
+
+\bibitem{nocedal2006}
+J.~Nocedal and S.~J.~Wright,
+\emph{Numerical Optimization},
+2nd Edition, Springer Series in Operations Research and Financial Engineering, 2006.
+
+\bibitem{perona1990}
+P.~Perona and J.~Malik,
+\emph{Scale-Space and Edge Detection Using Anisotropic Diffusion},
+IEEE Transactions on Pattern Analysis and Machine Intelligence, 12(7):629--639, 1990.
+
+\end{thebibliography}
+
 \end{document}
