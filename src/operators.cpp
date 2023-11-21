@@ -73,6 +73,62 @@ Canvas apply_masked(const Canvas& src, const Canvas& mask) {
   return out;
 }
 
+MaskIndexList extract_mask_indices(const Canvas& mask, float threshold) {
+  MaskIndexList indices;
+  for (int y = 0; y < mask.height(); ++y) {
+    for (int x = 0; x < mask.width(); ++x) {
+      if (mask.at(x, y, 0) >= threshold) {
+        indices.push_back({x, y});
+      }
+    }
+  }
+  return indices;
+}
+
+double masked_dot_product(const Canvas& a,
+                          const Canvas& b,
+                          const MaskIndexList& active_pixels) {
+  double sum = 0.0;
+  const int ch = a.channels();
+  for (const PixelCoord& pt : active_pixels) {
+    for (int c = 0; c < ch; ++c) {
+      sum += static_cast<double>(a.at(pt.x, pt.y, c)) *
+             static_cast<double>(b.at(pt.x, pt.y, c));
+    }
+  }
+  return sum;
+}
+
+void masked_axpy(Canvas& y,
+                 const Canvas& x,
+                 float alpha,
+                 const MaskIndexList& active_pixels) {
+  const int ch = y.channels();
+  for (const PixelCoord& pt : active_pixels) {
+    for (int c = 0; c < ch; ++c) {
+      y.at(pt.x, pt.y, c) += alpha * x.at(pt.x, pt.y, c);
+    }
+  }
+}
+
+Canvas apply_sparse_laplacian(const Canvas& src,
+                              const MaskIndexList& active_pixels) {
+  Canvas out(src.width(), src.height(), src.channels(), 0.0f);
+  const int ch = src.channels();
+  for (const PixelCoord& pt : active_pixels) {
+    const int x = pt.x;
+    const int y = pt.y;
+    for (int c = 0; c < ch; ++c) {
+      out.at(x, y, c) = 4.0f * src.at(x, y, c) -
+                        src.sample(x - 1, y, c, BorderMode::ClampEdge) -
+                        src.sample(x + 1, y, c, BorderMode::ClampEdge) -
+                        src.sample(x, y - 1, c, BorderMode::ClampEdge) -
+                        src.sample(x, y + 1, c, BorderMode::ClampEdge);
+    }
+  }
+  return out;
+}
+
 AnisotropicField build_anisotropic_field(const Canvas& guide_img,
                                          float kappa,
                                          float sigma_grad,
@@ -152,6 +208,44 @@ Canvas apply_anisotropic_laplacian(const Canvas& src,
             flux_y.at(x, y, c) - ((y > 0) ? flux_y.at(x, y - 1, c) : 0.0f);
         out.at(x, y, c) = -(div_x + div_y);
       }
+    }
+  }
+  return out;
+}
+
+Canvas apply_sparse_anisotropic_laplacian(const Canvas& src,
+                                          const AnisotropicField& field,
+                                          const MaskIndexList& active_pixels) {
+  const int w = src.width();
+  const int h = src.height();
+  const int ch = src.channels();
+  Canvas out(w, h, ch, 0.0f);
+
+  auto eval_flux_x = [&](int x, int y, int c) -> float {
+    if (x < 0 || x >= w || y < 0 || y >= h) return 0.0f;
+    const std::size_t idx = static_cast<std::size_t>(y) * w + x;
+    const float u0 = src.at(x, y, c);
+    const float ux = src.sample(x + 1, y, c, BorderMode::ClampEdge) - u0;
+    const float uy = src.sample(x, y + 1, c, BorderMode::ClampEdge) - u0;
+    return field.d_xx[idx] * ux + field.d_xy[idx] * uy;
+  };
+
+  auto eval_flux_y = [&](int x, int y, int c) -> float {
+    if (x < 0 || x >= w || y < 0 || y >= h) return 0.0f;
+    const std::size_t idx = static_cast<std::size_t>(y) * w + x;
+    const float u0 = src.at(x, y, c);
+    const float ux = src.sample(x + 1, y, c, BorderMode::ClampEdge) - u0;
+    const float uy = src.sample(x, y + 1, c, BorderMode::ClampEdge) - u0;
+    return field.d_xy[idx] * ux + field.d_yy[idx] * uy;
+  };
+
+  for (const PixelCoord& pt : active_pixels) {
+    const int x = pt.x;
+    const int y = pt.y;
+    for (int c = 0; c < ch; ++c) {
+      const float div_x = eval_flux_x(x, y, c) - ((x > 0) ? eval_flux_x(x - 1, y, c) : 0.0f);
+      const float div_y = eval_flux_y(x, y, c) - ((y > 0) ? eval_flux_y(x, y - 1, c) : 0.0f);
+      out.at(x, y, c) = -(div_x + div_y);
     }
   }
   return out;

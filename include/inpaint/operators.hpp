@@ -35,6 +35,27 @@ struct AnisotropicField {
   std::vector<float> d_yy;
 };
 
+struct PixelCoord {
+  int x;
+  int y;
+};
+
+using MaskIndexList = std::vector<PixelCoord>;
+
+MaskIndexList extract_mask_indices(const Canvas& mask, float threshold = 0.5f);
+
+double masked_dot_product(const Canvas& a,
+                          const Canvas& b,
+                          const MaskIndexList& active_pixels);
+
+void masked_axpy(Canvas& y,
+                 const Canvas& x,
+                 float alpha,
+                 const MaskIndexList& active_pixels);
+
+Canvas apply_sparse_laplacian(const Canvas& src,
+                              const MaskIndexList& active_pixels);
+
 AnisotropicField build_anisotropic_field(const Canvas& guide_img,
                                          float kappa = 0.08f,
                                          float sigma_grad = 1.0f,
@@ -42,6 +63,10 @@ AnisotropicField build_anisotropic_field(const Canvas& guide_img,
 
 Canvas apply_anisotropic_laplacian(const Canvas& src,
                                    const AnisotropicField& field);
+
+Canvas apply_sparse_anisotropic_laplacian(const Canvas& src,
+                                          const AnisotropicField& field,
+                                          const MaskIndexList& active_pixels);
 
 } // namespace inpaint
 
