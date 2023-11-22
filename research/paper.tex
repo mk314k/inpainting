@@ -456,6 +456,8 @@ $d \gets r$, \quad $\rho \gets \langle r, r \rangle$\;
 \Return $\operatorname{clamp}(X, 0, 1)$
 \end{algorithm}
 
+Furthermore, because all CG updates in Algorithms~\ref{alg:poisson_cg} and~\ref{alg:hybrid_inpaint} vanish identically outside $\Omega$, pre-indexing the active mask coordinates $\mathcal{M}_\Omega = \{p \in \Lambda \mid M_\Omega(p) = 1\}$ reduces the per-iteration work of both the five-point Laplacian $L$ and the anisotropic divergence operator $L_D = G^T D G$ from $\mathcal{O}(W H)$ to $\mathcal{O}(|\Omega|)$ operations.
+
 Figure~\ref{fig:exp_inpaint} and Table~\ref{tab:bench_summary} compare the three inpainting formulations on a corrupted scene containing both diagonal scratches and wide rectangular occlusions crossing mountain ridges and foreground targets. Cold-started Harmonic CG ($40$ iterations) suffers from boundary-to-center diffusion lag and isotropic blurring ($\text{PSNR} = 37.46\text{ dB}$), while standalone Telea FMM completes in a single causal pass ($\text{PSNR} = 36.58\text{ dB}$) but exhibits slight directional streaking along medial-axis collisions. Our hybrid \textbf{FMM-Warm-Started Structure-Tensor Anisotropic CG} (Algorithm~\ref{alg:hybrid_inpaint}, $40$ iterations) achieves $\mathbf{40.27\text{ dB}}$---outperforming cold-started Harmonic CG by $+2.81\text{ dB}$ and standalone FMM by $+3.69\text{ dB}$.
 
 \begin{figure}[ht]

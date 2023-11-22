@@ -89,6 +89,15 @@ void test_inpainting_solvers_and_hybrid_warm_start() {
   assert(inpaint::compute_psnr(gt, harm.image) > dmg_psnr + 4.0);
   assert(inpaint::compute_psnr(gt, fmm.image) > dmg_psnr + 6.0);
   assert(inpaint::compute_psnr(gt, hyb.image) >= inpaint::compute_psnr(gt, harm.image));
+
+  // Verify sparse active-mask operators match full-grid operators on masked domain
+  const inpaint::MaskIndexList active = inpaint::extract_mask_indices(mask);
+  assert(active.size() == 81u);
+  const Canvas full_lap = inpaint::apply_masked(inpaint::apply_laplacian(gt), mask);
+  const Canvas sparse_lap = inpaint::apply_sparse_laplacian(gt, active);
+  for (const inpaint::PixelCoord& pt : active) {
+    assert(std::abs(full_lap.at(pt.x, pt.y, 0) - sparse_lap.at(pt.x, pt.y, 0)) < 1e-5f);
+  }
 }
 
 } // namespace
