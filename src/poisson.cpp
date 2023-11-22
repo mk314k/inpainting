@@ -68,16 +68,20 @@ PoissonResult poisson_cg(const Canvas& background,
                          const Canvas* initial_guess) {
   imglib::ensure_same_shape(background, foreground);
   const Canvas bin_m = threshold_mask(mask);
+  const MaskIndexList active = extract_mask_indices(bin_m);
+  if (active.empty()) {
+    return {background.clamped(), {0.0}};
+  }
 
   Canvas x = background;
   if (initial_guess != nullptr) {
     x = naive_composite(background, *initial_guess, bin_m);
   }
 
-  const Canvas b = apply_laplacian(foreground);
-  Canvas r = apply_masked(b - apply_laplacian(x), bin_m);
+  const Canvas b = apply_sparse_laplacian(foreground, active);
+  Canvas r = apply_masked(b - apply_sparse_laplacian(x, active), bin_m);
   Canvas d = r;
-  double rho = dot_product(r, r);
+  double rho = masked_dot_product(r, r, active);
 
   std::vector<double> history;
   history.reserve(static_cast<std::size_t>(max_iters + 1));
@@ -85,19 +89,23 @@ PoissonResult poisson_cg(const Canvas& background,
 
   for (int k = 0; k < max_iters; ++k) {
     if (std::sqrt(rho) < tol) break;
-    const Canvas q = apply_masked(apply_laplacian(d), bin_m);
-    const double dq = std::max(1e-12, dot_product(d, q));
+    const Canvas q = apply_sparse_laplacian(d, active);
+    const double dq = std::max(1e-12, masked_dot_product(d, q, active));
     const float alpha = static_cast<float>(rho / dq);
 
-    x = x + d * alpha;
-    r = apply_masked(r - q * alpha, bin_m);
+    masked_axpy(x, d, alpha, active);
+    masked_axpy(r, q, -alpha, active);
 
-    const double rho_next = dot_product(r, r);
+    const double rho_next = masked_dot_product(r, r, active);
     history.push_back(std::sqrt(rho_next));
     if (std::sqrt(rho_next) < tol) break;
 
     const float beta = static_cast<float>(rho_next / std::max(1e-12, rho));
-    d = r + d * beta;
+    for (const PixelCoord& pt : active) {
+      for (int c = 0; c < d.channels(); ++c) {
+        d.at(pt.x, pt.y, c) = r.at(pt.x, pt.y, c) + beta * d.at(pt.x, pt.y, c);
+      }
+    }
     rho = rho_next;
   }
 
@@ -114,6 +122,10 @@ PoissonResult poisson_mixed_cg(const Canvas& background,
   const int h = background.height();
   const int ch = background.channels();
   const Canvas bin_m = threshold_mask(mask);
+  const MaskIndexList active = extract_mask_indices(bin_m);
+  if (active.empty()) {
+    return {background.clamped(), {0.0}};
+  }
 
   // Construct structure-dominant mixed-gradient divergence G^T v*
   Canvas vx(w, h, ch, 0.0f);
@@ -142,20 +154,20 @@ PoissonResult poisson_mixed_cg(const Canvas& background,
   }
 
   Canvas b_mixed(w, h, ch, 0.0f);
-  for (int y = 0; y < h; ++y) {
-    for (int x = 0; x < w; ++x) {
-      for (int c = 0; c < ch; ++c) {
-        const float div_x = vx.at(x, y, c) - ((x > 0) ? vx.at(x - 1, y, c) : 0.0f);
-        const float div_y = vy.at(x, y, c) - ((y > 0) ? vy.at(x, y - 1, c) : 0.0f);
-        b_mixed.at(x, y, c) = -(div_x + div_y);
-      }
+  for (const PixelCoord& pt : active) {
+    const int x = pt.x;
+    const int y = pt.y;
+    for (int c = 0; c < ch; ++c) {
+      const float div_x = vx.at(x, y, c) - ((x > 0) ? vx.at(x - 1, y, c) : 0.0f);
+      const float div_y = vy.at(x, y, c) - ((y > 0) ? vy.at(x, y - 1, c) : 0.0f);
+      b_mixed.at(x, y, c) = -(div_x + div_y);
     }
   }
 
   Canvas x = background;
-  Canvas r = apply_masked(b_mixed - apply_laplacian(x), bin_m);
+  Canvas r = apply_masked(b_mixed - apply_sparse_laplacian(x, active), bin_m);
   Canvas d = r;
-  double rho = dot_product(r, r);
+  double rho = masked_dot_product(r, r, active);
 
   std::vector<double> history;
   history.reserve(static_cast<std::size_t>(max_iters + 1));
@@ -163,19 +175,23 @@ PoissonResult poisson_mixed_cg(const Canvas& background,
 
   for (int k = 0; k < max_iters; ++k) {
     if (std::sqrt(rho) < tol) break;
-    const Canvas q = apply_masked(apply_laplacian(d), bin_m);
-    const double dq = std::max(1e-12, dot_product(d, q));
+    const Canvas q = apply_sparse_laplacian(d, active);
+    const double dq = std::max(1e-12, masked_dot_product(d, q, active));
     const float alpha = static_cast<float>(rho / dq);
 
-    x = x + d * alpha;
-    r = apply_masked(r - q * alpha, bin_m);
+    masked_axpy(x, d, alpha, active);
+    masked_axpy(r, q, -alpha, active);
 
-    const double rho_next = dot_product(r, r);
+    const double rho_next = masked_dot_product(r, r, active);
     history.push_back(std::sqrt(rho_next));
     if (std::sqrt(rho_next) < tol) break;
 
     const float beta = static_cast<float>(rho_next / std::max(1e-12, rho));
-    d = r + d * beta;
+    for (const PixelCoord& pt : active) {
+      for (int c = 0; c < d.channels(); ++c) {
+        d.at(pt.x, pt.y, c) = r.at(pt.x, pt.y, c) + beta * d.at(pt.x, pt.y, c);
+      }
+    }
     rho = rho_next;
   }
 

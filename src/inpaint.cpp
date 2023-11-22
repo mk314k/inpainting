@@ -258,20 +258,24 @@ InpaintResult inpaint_hybrid_structure_cg(const Canvas& corrupted,
                                           int cg_iters,
                                           double tol) {
   const Canvas bin_m = threshold_mask(mask);
+  const MaskIndexList active = extract_mask_indices(bin_m);
 
   // Stage 1: Telea Eikonal Fast Marching warm start
   const InpaintResult fmm = inpaint_telea_fmm(corrupted, bin_m, fmm_radius);
+  if (active.empty()) {
+    return fmm;
+  }
 
   // Stage 2: Build structure-tensor anisotropic conductivity field D(p)
   const AnisotropicField field = build_anisotropic_field(fmm.image, kappa, 1.0f, 3.0f);
 
-  // Stage 3: Anisotropic Conjugate Gradient relaxation from FMM warm start
+  // Stage 3: O(|Omega|) Sparse Anisotropic Conjugate Gradient relaxation from FMM warm start
   Canvas x = fmm.image;
   Canvas r = apply_masked(Canvas(x.width(), x.height(), x.channels(), 0.0f) -
-                              apply_anisotropic_laplacian(x, field),
+                              apply_sparse_anisotropic_laplacian(x, field, active),
                           bin_m);
   Canvas d = r;
-  double rho = dot_product(r, r);
+  double rho = masked_dot_product(r, r, active);
 
   std::vector<double> history;
   history.reserve(static_cast<std::size_t>(cg_iters + 1));
@@ -279,19 +283,23 @@ InpaintResult inpaint_hybrid_structure_cg(const Canvas& corrupted,
 
   for (int k = 0; k < cg_iters; ++k) {
     if (std::sqrt(rho) < tol) break;
-    const Canvas q = apply_masked(apply_anisotropic_laplacian(d, field), bin_m);
-    const double dq = std::max(1e-12, dot_product(d, q));
+    const Canvas q = apply_sparse_anisotropic_laplacian(d, field, active);
+    const double dq = std::max(1e-12, masked_dot_product(d, q, active));
     const float alpha = static_cast<float>(rho / dq);
 
-    x = x + d * alpha;
-    r = apply_masked(r - q * alpha, bin_m);
+    masked_axpy(x, d, alpha, active);
+    masked_axpy(r, q, -alpha, active);
 
-    const double rho_next = dot_product(r, r);
+    const double rho_next = masked_dot_product(r, r, active);
     history.push_back(std::sqrt(rho_next));
     if (std::sqrt(rho_next) < tol) break;
 
     const float beta = static_cast<float>(rho_next / std::max(1e-12, rho));
-    d = r + d * beta;
+    for (const PixelCoord& pt : active) {
+      for (int c = 0; c < d.channels(); ++c) {
+        d.at(pt.x, pt.y, c) = r.at(pt.x, pt.y, c) + beta * d.at(pt.x, pt.y, c);
+      }
+    }
     rho = rho_next;
   }
 
